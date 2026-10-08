@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FAN Studio · Herramientas</title>
+  <style>
+    :root { --bg:#f6f6f4; --card:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e2e2dd; --accent:#1f5eff; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+    .hidden { display:none !important; }
+    header { display:flex; justify-content:space-between; align-items:center; padding:14px 20px; background:var(--card); border-bottom:1px solid var(--line); }
+    header h1 { font-size:18px; margin:0; }
+    .layout { display:grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 55px); }
+    aside { background:var(--card); border-right:1px solid var(--line); padding:16px; }
+    main { padding:24px; max-width: 900px; width:100%; }
+    h2 { font-size:20px; margin:0 0 4px; }
+    h3 { font-size:15px; margin:24px 0 8px; }
+    .muted { color:var(--muted); font-size:14px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+    input, textarea, select { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:8px; font:inherit; background:#fff; margin-bottom:10px; }
+    textarea { min-height: 110px; resize: vertical; }
+    button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:9px 14px; font:inherit; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+    button.danger { background:#fff; color:#b42318; border:1px solid #f1c0bb; }
+    .client-btn { display:block; width:100%; text-align:left; background:transparent; color:var(--ink); padding:9px 10px; border-radius:8px; margin-bottom:4px; }
+    .client-btn.active { background:#eef3ff; color:var(--accent); }
+    .row { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }
+    .row:last-child { border-bottom:0; }
+    pre { white-space:pre-wrap; word-wrap:break-word; background:#fafaf8; border:1px solid var(--line); border-radius:8px; padding:14px; font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace; max-height: 420px; overflow:auto; }
+    .error { color:#b42318; font-size:14px; margin:6px 0; }
+    .login { max-width: 340px; margin: 12vh auto; }
+    a { color: var(--accent); word-break: break-all; }
+  </style>
+</head>
+<body>
+
+<section id="login-view" class="login hidden">
+  <div class="card">
+    <h2>FAN Studio</h2>
+    <p class="muted">Herramientas internas</p>
+    <form id="login-form">
+      <input id="password" type="password" placeholder="Contraseña" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+</section>
+
+<div id="app-view" class="hidden">
+  <header>
+    <h1>FAN Studio · Herramientas</h1>
+    <button class="ghost" id="logout-btn">Salir</button>
+  </header>
+  <div class="layout">
+    <aside>
+      <form id="new-client-form">
+        <input id="new-client-name" placeholder="Nombre del cliente" required>
+        <button type="submit" style="width:100%">Agregar cliente</button>
+      </form>
+      <div id="client-list" style="margin-top:16px"></div>
+    </aside>
+    <main id="client-view">
+      <p class="muted">Elegí un cliente o creá uno nuevo.</p>
+    </main>
+  </div>
+</div>
+
+<script>
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+let currentClientId = null;
+
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && url !== '/api/login') { showLogin(); throw new Error('Sesión vencida'); }
+  if (!res.ok) throw new Error(data.error || 'Error inesperado');
+  return data;
+}
+
+function showLogin() {
+  $('#app-view').classList.add('hidden');
+  $('#login-view').classList.remove('hidden');
+}
+
+function showApp() {
+  $('#login-view').classList.add('hidden');
+  $('#app-view').classList.remove('hidden');
+  loadClients();
+}
+
+async function loadClients() {
+  const clients = await api('GET', '/api/clients');
+  $('#client-list').innerHTML = clients.length
+    ? clients.map((c) => `<button class="client-btn ${c.id === currentClientId ? 'active' : ''}" data-id="${esc(c.id)}">${esc(c.name)}</button>`).join('')
+    : '<p class="muted">Todavía no hay clientes.</p>';
+  document.querySelectorAll('.client-btn').forEach((b) =>
+    b.addEventListener('click', () => openClient(b.dataset.id))
+  );
+}
+
+async function openClient(id) {
+  currentClientId = id;
+  await loadClients();
+  renderClient(await api('GET', `/api/clients/${id}`));
+}
+
+function renderClient(client) {
+  const links = client.items.filter((i) => i.type === 'link');
+  const outputs = client.items.filter((i) => i.type === 'output');
+
+  $('#client-view').innerHTML = `
+    <h2>${esc(client.name)}</h2>
+    <p class="muted">${esc(client.notes || 'Sin notas del cliente.')}</p>
+
+    <h3>Ideas y referencias</h3>
+    <div class="card">
+      <form id="link-form">
+        <input id="link-title" placeholder="Título (ej: Video de referencia de otra productora)" required>
+        <input id="link-url" placeholder="Link (opcional)">
+        <textarea id="link-note" placeholder="Qué te gusta de esto, qué idea tomar (opcional)" style="min-height:70px"></textarea>
+        <button type="submit">Guardar referencia</button>
+        <p id="link-error" class="error hidden"></p>
+      </form>
+      <div style="margin-top:14px">
+        ${links.length ? links.map((l) => `
+          <div class="row">
+            <div>
+              <strong>${esc(l.title)}</strong>
+              ${l.url ? `<div><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.url)}</a></div>` : ''}
+              ${l.note ? `<div class="muted">${esc(l.note)}</div>` : ''}
+            </div>
+            <button class="danger" data-del-item="${esc(l.id)}">Borrar</button>
+          </div>`).join('') : '<p class="muted">Todavía no hay referencias.</p>'}
+      </div>
+    </div>
+
+    <h3>Generar</h3>
+    <div class="card">
+      <form id="generate-form">
+        <select id="gen-kind">
+          <option value="guion">Guion de video</option>
+          <option value="contenido">Contenido para redes</option>
+        </select>
+        <textarea id="gen-brief" placeholder="Brief del proyecto: objetivo, público, duración, plataformas, mensaje clave" required></textarea>
+        <button type="submit" id="gen-btn">Generar</button>
+        <p id="gen-error" class="error hidden"></p>
+      </form>
+    </div>
+
+    <h3>Resultados guardados</h3>
+    <div class="card">
+      ${outputs.length ? outputs.slice().reverse().map((o) => `
+        <div class="row" style="display:block">
+          <div class="muted">${o.kind === 'guion' ? 'Guion' : 'Contenido'} · ${new Date(o.createdAt).toLocaleString('es-AR')}</div>
+          <pre>${esc(o.text)}</pre>
+          <div style="display:flex; gap:8px">
+            <button class="ghost" data-copy="${esc(o.id)}">Copiar</button>
+            <button class="danger" data-del-item="${esc(o.id)}">Borrar</button>
+          </div>
+        </div>`).join('') : '<p class="muted">Todavía no generaste nada para este cliente.</p>'}
+    </div>
+
+    <h3>Cliente</h3>
+    <button class="danger" id="delete-client">Borrar cliente y todo su contenido</button>
+  `;
+
+  $('#link-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('POST', `/api/clients/${client.id}/items`, {
+        title: $('#link-title').value,
+        url: $('#link-url').value,
+        note: $('#link-note').value,
+      });
+      openClient(client.id);
+    } catch (err) {
+      $('#link-error').textContent = err.message;
+      $('#link-error').classList.remove('hidden');
+    }
+  });
+
+  $('#generate-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = $('#gen-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generando...';
+    $('#gen-error').classList.add('hidden');
+    try {
+      await api('POST', `/api/clients/${client.id}/generate`, {
+        kind: $('#gen-kind').value,
+        brief: $('#gen-brief').value,
+      });
+      openClient(client.id);
+    } catch (err) {
+      $('#gen-error').textContent = err.message;
+      $('#gen-error').classList.remove('hidden');
+      btn.disabled = false;
+      btn.textContent = 'Generar';
+    }
+  });
+
+  document.querySelectorAll('[data-del-item]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este elemento?')) return;
+      await api('DELETE', `/api/clients/${client.id}/items/${b.dataset.delItem}`);
+      openClient(client.id);
+    })
+  );
+
+  document.querySelectorAll('[data-copy]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const output = outputs.find((o) => o.id === b.dataset.copy);
+      await navigator.clipboard.writeText(output.text);
+      b.textContent = 'Copiado';
+    })
+  );
+
+  $('#delete-client').addEventListener('click', async () => {
+    if (!confirm(`¿Borrar a ${client.name} y todo lo que tiene guardado?`)) return;
+    await api('DELETE', `/api/clients/${client.id}`);
+    currentClientId = null;
+    $('#client-view').innerHTML = '<p class="muted">Cliente borrado.</p>';
+    loadClients();
+  });
+}
+
+$('#login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    await api('POST', '/api/login', { password: $('#password').value });
+    $('#password').value = '';
+    $('#login-error').classList.add('hidden');
+    showApp();
+  } catch (err) {
+    $('#login-error').textContent = err.message;
+    $('#login-error').classList.remove('hidden');
+  }
+});
+
+$('#logout-btn').addEventListener('click', async () => {
+  await api('POST', '/api/logout');
+  showLogin();
+});
+
+$('#new-client-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#new-client-name').value;
+  const client = await api('POST', '/api/clients', { name });
+  $('#new-client-name').value = '';
+  openClient(client.id);
+});
+
+// Al abrir la página: si hay sesión válida, entra directo.
+api('GET', '/api/clients').then(showApp).catch(showLogin);
+</script>
+</body>
+</html>
